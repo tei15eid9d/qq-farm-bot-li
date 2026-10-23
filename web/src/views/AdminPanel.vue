@@ -13,9 +13,13 @@ import BaseSwitch from '@/components/ui/BaseSwitch.vue'
 import BaseTextarea from '@/components/ui/BaseTextarea.vue'
 import { useToastStore } from '@/stores/toast'
 import { useUserStore } from '@/stores/user'
+import { useMediaQuery } from '@/utils/use-media-query'
 
 const userStore = useUserStore()
 const toast = useToastStore()
+
+// 窄屏（手机）下后台表格切换为卡片布局，避免列宽挤压导致文字竖排
+const isMobile = useMediaQuery('(max-width: 639px)')
 
 type AdminTab = 'card' | 'user' | 'log' | 'announcement'
 const storedTab = localStorage.getItem('admin-active-tab')
@@ -803,12 +807,12 @@ onMounted(() => {
       <div class="flex flex-wrap items-center gap-2">
         <BaseInput
           v-model="searchQuery"
-          class="w-56"
+          class="w-full sm:w-56"
           placeholder="搜索卡密/描述/使用者"
         />
         <BaseSelect
           v-model="filterStatus"
-          class="w-32"
+          class="w-full sm:w-32"
           :options="[
             { label: '全部状态', value: 'all' },
             { label: '已使用', value: 'used' },
@@ -819,7 +823,7 @@ onMounted(() => {
         />
         <BaseSelect
           v-model="cardTypeFilter"
-          class="w-32"
+          class="w-full sm:w-32"
           :options="[
             { label: '全部类型', value: 'all' },
             { label: '时间卡', value: 'time' },
@@ -836,9 +840,9 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- 卡密表格 -->
-      <div class="overflow-x-auto border border-gray-200 rounded-xl dark:border-gray-700">
-        <table class="w-full text-sm">
+      <!-- 卡密表格（宽屏） -->
+      <div v-if="!isMobile" class="overflow-x-auto border border-gray-200 rounded-xl dark:border-gray-700">
+        <table class="w-full min-w-[880px] text-sm">
           <thead>
             <tr class="border-b border-gray-200 bg-gray-50 text-left dark:border-gray-700 dark:bg-gray-800/60">
               <th class="w-10 px-3 py-2.5">
@@ -933,6 +937,87 @@ onMounted(() => {
         </table>
       </div>
 
+      <!-- 卡密卡片（窄屏） -->
+      <div v-else class="space-y-3">
+        <div v-if="filteredCards.length === 0" class="border border-gray-200 rounded-xl bg-white px-3 py-8 text-center text-sm text-gray-400 dark:border-gray-700 dark:bg-gray-800">
+          {{ cardsLoading ? '加载中...' : '暂无卡密' }}
+        </div>
+        <div
+          v-for="card in filteredCards"
+          :key="card.code"
+          class="border border-gray-200 rounded-xl bg-white p-3 dark:border-gray-700 dark:bg-gray-800"
+        >
+          <div class="flex items-center gap-2">
+            <input type="checkbox" :checked="selectedCards.has(card.code)" @change="toggleSelectCard(card.code)">
+            <span class="flex-1 font-mono text-sm font-medium break-all">
+              {{ card.code }}
+            </span>
+            <span class="shrink-0 rounded px-1.5 py-0.5 text-xs" :class="card.type === 'quota' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'">
+              {{ getCardTypeLabel(card) }}
+            </span>
+          </div>
+          <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+            <div>
+              <div class="text-gray-400 dark:text-gray-500">
+                描述
+              </div>
+              <div class="mt-0.5 break-all">
+                {{ card.description || '-' }}
+              </div>
+            </div>
+            <div>
+              <div class="text-gray-400 dark:text-gray-500">
+                面值
+              </div>
+              <div class="mt-0.5">
+                {{ getCardValueLabel(card) }}
+              </div>
+            </div>
+            <div>
+              <div class="text-gray-400 dark:text-gray-500">
+                状态
+              </div>
+              <div class="mt-0.5 flex flex-wrap gap-1">
+                <span class="rounded px-1.5 py-0.5" :class="card.enabled ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'">
+                  {{ card.enabled ? '启用' : '禁用' }}
+                </span>
+                <span v-if="card.usedBy" class="rounded bg-amber-100 px-1.5 py-0.5 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                  已用
+                </span>
+              </div>
+            </div>
+            <div>
+              <div class="text-gray-400 dark:text-gray-500">
+                使用者
+              </div>
+              <div class="mt-0.5 break-all">
+                {{ card.usedBy || '-' }}
+                <span v-if="card.usedAt" class="ml-1 text-gray-400 dark:text-gray-500">{{ formatDate(card.usedAt) }}</span>
+              </div>
+            </div>
+            <div class="col-span-2">
+              <div class="text-gray-400 dark:text-gray-500">
+                创建时间
+              </div>
+              <div class="mt-0.5">
+                {{ formatDate(card.createdAt) }}
+              </div>
+            </div>
+          </div>
+          <div class="mt-2.5 flex flex-wrap justify-end gap-1 border-t border-gray-100 pt-2.5 dark:border-gray-700/60">
+            <NButton quaternary size="tiny" @click="copyCode(card.code)">
+              复制
+            </NButton>
+            <NButton quaternary size="tiny" @click="toggleCardStatus(card)">
+              {{ card.enabled ? '禁用' : '启用' }}
+            </NButton>
+            <NButton quaternary size="tiny" type="error" @click="confirmDeleteCard(card)">
+              删除
+            </NButton>
+          </div>
+        </div>
+      </div>
+
       <!-- 创建卡密弹窗 -->
       <div v-if="showCreateModal" class="modal-mask" @click.self="showCreateModal = false">
         <div class="modal-card">
@@ -986,8 +1071,9 @@ onMounted(() => {
         </BaseButton>
       </div>
 
-      <div class="overflow-x-auto border border-gray-200 rounded-xl dark:border-gray-700">
-        <table class="w-full text-sm">
+      <!-- 用户表格（宽屏） -->
+      <div v-if="!isMobile" class="overflow-x-auto border border-gray-200 rounded-xl dark:border-gray-700">
+        <table class="w-full min-w-[760px] text-sm">
           <thead>
             <tr class="border-b border-gray-200 bg-gray-50 text-left dark:border-gray-700 dark:bg-gray-800/60">
               <th class="px-3 py-2.5 font-medium">
@@ -1080,6 +1166,90 @@ onMounted(() => {
         </table>
       </div>
 
+      <!-- 用户卡片（窄屏） -->
+      <div v-else class="space-y-3">
+        <div v-if="users.length === 0" class="border border-gray-200 rounded-xl bg-white px-3 py-8 text-center text-sm text-gray-400 dark:border-gray-700 dark:bg-gray-800">
+          {{ usersLoading ? '加载中...' : '暂无用户' }}
+        </div>
+        <div
+          v-for="user in users"
+          :key="user.username"
+          class="border border-gray-200 rounded-xl bg-white p-3 dark:border-gray-700 dark:bg-gray-800"
+        >
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-medium break-all">
+              {{ user.username }}
+            </span>
+            <span v-if="user.username === currentUsername" class="shrink-0 text-xs text-gray-400 dark:text-gray-500">（当前登录）</span>
+            <span class="ml-auto shrink-0 rounded px-1.5 py-0.5 text-xs" :class="user.role === 'admin' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'">
+              {{ user.role === 'admin' ? '管理员' : '用户' }}
+            </span>
+          </div>
+          <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+            <div>
+              <div class="text-gray-400 dark:text-gray-500">
+                卡密
+              </div>
+              <div class="mt-0.5 break-all">
+                <span v-if="user.card">{{ user.card.description || user.card.code }}</span>
+                <span v-else class="text-gray-400 dark:text-gray-500">无卡密</span>
+              </div>
+            </div>
+            <div>
+              <div class="text-gray-400 dark:text-gray-500">
+                到期时间
+              </div>
+              <div class="mt-0.5" :class="isUserExpired(user) ? 'text-red-600 dark:text-red-400' : ''">
+                <span v-if="user.role === 'admin'">永久有效</span>
+                <span v-else-if="user.card?.days === -1">永久有效</span>
+                <span v-else-if="user.card?.expiresAt">{{ formatDate(user.card.expiresAt) }}</span>
+                <span v-else class="text-gray-400 dark:text-gray-500">未激活</span>
+              </div>
+            </div>
+            <div>
+              <div class="text-gray-400 dark:text-gray-500">
+                账号上限
+              </div>
+              <div class="mt-0.5">
+                {{ user.role === 'admin' ? '不限' : user.accountLimit }}
+              </div>
+            </div>
+            <div>
+              <div class="text-gray-400 dark:text-gray-500">
+                状态
+              </div>
+              <div class="mt-0.5">
+                <span class="rounded px-1.5 py-0.5" :class="isUserBanned(user) ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' : 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'">
+                  {{ isUserBanned(user) ? '已封禁' : '正常' }}
+                </span>
+              </div>
+            </div>
+            <div class="col-span-2">
+              <div class="text-gray-400 dark:text-gray-500">
+                注册时间
+              </div>
+              <div class="mt-0.5">
+                {{ formatDate(user.createdAt) }}
+              </div>
+            </div>
+          </div>
+          <div class="mt-2.5 flex flex-wrap justify-end gap-1 border-t border-gray-100 pt-2.5 dark:border-gray-700/60">
+            <NButton quaternary size="tiny" @click="openEditModal(user)">
+              编辑
+            </NButton>
+            <NButton v-if="user.role !== 'admin'" quaternary size="tiny" @click="openRenewModal(user)">
+              续期
+            </NButton>
+            <NButton v-if="user.role !== 'admin'" quaternary size="tiny" :type="isUserBanned(user) ? 'primary' : 'warning'" @click="toggleUserStatus(user)">
+              {{ isUserBanned(user) ? '解封' : '封禁' }}
+            </NButton>
+            <NButton v-if="user.username !== currentUsername" quaternary size="tiny" type="error" @click="confirmDeleteUser(user)">
+              删除
+            </NButton>
+          </div>
+        </div>
+      </div>
+
       <!-- 编辑用户弹窗 -->
       <div v-if="showEditModal && selectedUser" class="modal-mask" @click.self="showEditModal = false">
         <div class="modal-card">
@@ -1162,8 +1332,9 @@ onMounted(() => {
         </div>
       </div>
 
-      <div class="overflow-x-auto border border-gray-200 rounded-xl dark:border-gray-700">
-        <table class="w-full text-sm">
+      <!-- 登录日志表格（宽屏） -->
+      <div v-if="!isMobile" class="overflow-x-auto border border-gray-200 rounded-xl dark:border-gray-700">
+        <table class="w-full min-w-[720px] text-sm">
           <thead>
             <tr class="border-b border-gray-200 bg-gray-50 text-left dark:border-gray-700 dark:bg-gray-800/60">
               <th class="px-3 py-2.5 font-medium">
@@ -1220,6 +1391,61 @@ onMounted(() => {
             </tr>
           </tbody>
         </table>
+      </div>
+
+      <!-- 登录日志卡片（窄屏） -->
+      <div v-else class="space-y-3">
+        <div v-if="loginLogs.length === 0" class="border border-gray-200 rounded-xl bg-white px-3 py-8 text-center text-sm text-gray-400 dark:border-gray-700 dark:bg-gray-800">
+          {{ loginLogsLoading ? '加载中...' : '暂无日志' }}
+        </div>
+        <div
+          v-for="log in loginLogs"
+          :key="log.id"
+          class="border border-gray-200 rounded-xl bg-white p-3 dark:border-gray-700 dark:bg-gray-800"
+        >
+          <div class="flex items-center gap-2">
+            <span class="shrink-0 rounded px-1.5 py-0.5 text-xs" :class="getEventClass(log.event)">
+              {{ getEventLabel(log.event) }}
+            </span>
+            <span class="ml-auto shrink-0 text-xs text-gray-400 dark:text-gray-500">
+              {{ formatLogTime(log.timestamp) }}
+            </span>
+          </div>
+          <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+            <div>
+              <div class="text-gray-400 dark:text-gray-500">
+                用户名
+              </div>
+              <div class="mt-0.5 break-all">
+                {{ log.username }}
+              </div>
+            </div>
+            <div>
+              <div class="text-gray-400 dark:text-gray-500">
+                失败原因
+              </div>
+              <div class="mt-0.5">
+                {{ getErrorTypeLabel(log.errorType) }}
+              </div>
+            </div>
+            <div>
+              <div class="text-gray-400 dark:text-gray-500">
+                IP
+              </div>
+              <div class="mt-0.5 font-mono break-all">
+                {{ log.ip }}
+              </div>
+            </div>
+            <div>
+              <div class="text-gray-400 dark:text-gray-500">
+                浏览器
+              </div>
+              <div class="mt-0.5 break-all">
+                {{ parseBrowser(log.userAgent) }}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
