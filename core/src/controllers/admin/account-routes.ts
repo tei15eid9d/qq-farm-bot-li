@@ -480,12 +480,18 @@ function mountAccountRoutes(app: Application, ctx: AdminContext): void {
         }
     });
 
-    app.get('/api/settings/login-config', adminRequired, (_req: Request, res: Response) => {
+    // 登录开关（微信/QQ 扫码）需对普通用户开放：添加账号流程依赖它决定显示哪些登录方式。
+    // napcat 面板地址/签名为敏感配置，仅管理员可读。
+    app.get('/api/settings/login-config', (_req: Request, res: Response) => {
         try {
             const loginSettings = store.getLoginSettings
                 ? store.getLoginSettings()
                 : { wechatQrLogin: true, qqQrLogin: false, napCatEndpoint: '', napCatSignature: '' };
-            res.json({ ok: true, data: loginSettings });
+            const isAdmin = (_req as any).currentUser?.role === 'admin';
+            const data = isAdmin
+                ? loginSettings
+                : { wechatQrLogin: loginSettings.wechatQrLogin, qqQrLogin: loginSettings.qqQrLogin };
+            res.json({ ok: true, data });
         } catch (e: any) {
             handleApiError(res, e);
         }

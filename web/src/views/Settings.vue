@@ -146,7 +146,9 @@ onMounted(async () => {
   }
   if (currentAccountId.value)
     await loadStrategyData(currentAccountId.value)
-  await Promise.all([loadSystemConfig(), loadDevicePresets()])
+  // 系统配置与设备预设仅管理员使用（系统标签对普通用户隐藏），跳过请求避免 403
+  if (isAdmin.value)
+    await Promise.all([loadSystemConfig(), loadDevicePresets()])
 })
 
 function openSettings(account: any) {
