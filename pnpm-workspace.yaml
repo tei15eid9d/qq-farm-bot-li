@@ -1,0 +1,11 @@
+packages:
+  - core
+  - web
+
+overrides:
+  '@babel/traverse': 7.26.10
+
+ignoredBuiltDependencies:
+  - '@parcel/watcher'
+  - esbuild
+  - protobufjs
