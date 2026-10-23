@@ -8,6 +8,8 @@ export interface Account {
   qq: string;
   avatar: string;
   nick?: string;
+  /** 账号归属用户（多用户隔离）；历史数据为空时按 admin 处理 */
+  username?: string;
   createdAt: number;
   updatedAt: number;
 }

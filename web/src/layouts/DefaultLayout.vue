@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { useResizeObserver } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
-import { computed, nextTick, provide, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, provide, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import AnnouncementModal from '@/components/AnnouncementModal.vue'
 import MobileBottomNav from '@/components/MobileBottomNav.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import Sidebar from '@/components/Sidebar.vue'
 import { useAppStore } from '@/stores/app'
+import { useUserStore } from '@/stores/user'
 
 const appStore = useAppStore()
+const userStore = useUserStore()
 const route = useRoute()
 const { sidebarOpen, activityDetailOpen } = storeToRefs(appStore)
 // 页头固定在滚动区之外；活动详情自带标题栏，打开时隐藏通用页头。
@@ -18,6 +21,11 @@ const scrolled = ref(false)
 const scrollEl = ref<HTMLElement | null>(null)
 const pageTabsTarget = ref<HTMLElement | null>(null)
 provide('page-tabs-target', pageTabsTarget)
+
+// 进入应用后刷新一次用户信息（角色、卡密、账号上限以服务端为准）
+onMounted(() => {
+  userStore.fetchUserInfo()
+})
 
 function measureScrollbar() {
   const el = scrollEl.value
@@ -77,6 +85,8 @@ useResizeObserver(scrollEl, measureScrollbar)
     </main>
 
     <MobileBottomNav v-if="!route.meta.fullBleed" />
+
+    <AnnouncementModal />
   </div>
 </template>
 

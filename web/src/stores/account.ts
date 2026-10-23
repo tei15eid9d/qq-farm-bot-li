@@ -1,7 +1,8 @@
 import { useStorage } from '@vueuse/core'
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import api from '@/api'
+import { useUserStore } from '@/stores/user'
 
 export interface Account {
   id: string
@@ -43,6 +44,14 @@ export const useAccountStore = defineStore('account', () => {
   const loading = ref(false)
   const logs = ref<AccountLog[]>([])
   let accountsRequestSequence = 0
+
+  // 多用户隔离：登录用户变化（换人登录/登出）时清残留的账号选择，
+  // 避免请求头携带他人的 x-account-id 被服务端拦截
+  const userStore = useUserStore()
+  watch(() => userStore.token, () => {
+    if (currentAccountId.value)
+      currentAccountId.value = ''
+  })
 
   const currentAccount = computed(() =>
     accounts.value.find(a => String(a.id) === currentAccountId.value),

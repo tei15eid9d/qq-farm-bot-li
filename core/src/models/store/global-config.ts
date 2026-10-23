@@ -1,4 +1,4 @@
-import type { GlobalConfig, LoginSettings, OfflineReminder, SystemConfig, UIConfig } from '../../types/config';
+import type { Announcement, GlobalConfig, LoginSettings, OfflineReminder, SystemConfig, UIConfig } from '../../types/config';
 export {};
 
 const { DEFAULT_CLIENT_VERSION, DEFAULT_WX_CLIENT_VERSION, DEFAULT_TIME_ZONE, normalizeTimeZone, resolveClientVersionUpdatedAt } = require('../../config/config');
@@ -117,6 +117,48 @@ function setOfflineReminder(cfg: Partial<OfflineReminder> | undefined): OfflineR
     return getOfflineReminder();
 }
 
+function normalizeAnnouncement(input: unknown): Announcement {
+    const src: Record<string, any> = (input && typeof input === 'object') ? input : {};
+    return {
+        content: typeof src.content === 'string' ? src.content : '',
+        showOnce: src.showOnce !== false,
+        updatedAt: Number(src.updatedAt) || 0,
+        updatedBy: typeof src.updatedBy === 'string' ? src.updatedBy : '',
+    };
+}
+
+function getAnnouncement(): Announcement {
+    return normalizeAnnouncement(globalConfig.announcement);
+}
+
+function setAnnouncement(content: unknown, showOnce: boolean = true, updatedBy: string = ''): Announcement {
+    const next: Announcement = {
+        content: String(content == null ? '' : content),
+        showOnce: showOnce !== false,
+        updatedAt: Date.now(),
+        updatedBy: String(updatedBy || ''),
+    };
+    saveGlobalConfig({ announcement: next, announcementReads: {} });
+    return getAnnouncement();
+}
+
+function markAnnouncementRead(username: string): void {
+    const key = String(username || '').trim();
+    if (!key) return;
+    const reads = { ...(globalConfig.announcementReads || {}) };
+    reads[key] = Date.now();
+    saveGlobalConfig({ announcementReads: reads });
+}
+
+function shouldShowAnnouncement(username: string): boolean {
+    const announcement = getAnnouncement();
+    if (!announcement.content) return false;
+    if (!announcement.showOnce) return true;
+    const key = String(username || '').trim();
+    const readAt = (globalConfig.announcementReads || {})[key] || 0;
+    return readAt < announcement.updatedAt;
+}
+
 function getSystemConfig(): SystemConfig | null {
     return globalConfig.systemConfig ? { ...globalConfig.systemConfig } : null;
 }
@@ -200,6 +242,10 @@ module.exports = {
     setLoginSettings,
     getOfflineReminder,
     setOfflineReminder,
+    getAnnouncement,
+    setAnnouncement,
+    markAnnouncementRead,
+    shouldShowAnnouncement,
     getSystemConfig,
     setSystemConfig,
 };

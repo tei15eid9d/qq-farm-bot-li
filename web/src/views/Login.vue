@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import api, { getApiErrorMessage } from '@/api'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
@@ -12,6 +12,24 @@ const userStore = useUserStore()
 const appVersion = __APP_VERSION__
 const gameVersion = ref('')
 const wxGameVersion = ref('')
+
+// 登录 / 注册模式切换
+const isLogin = ref(true)
+const cardCode = ref('')
+const showPasswordStrength = ref(false)
+
+// 免费领卡
+const cardClaimEnabled = ref(false)
+const cardClaimLoading = ref(false)
+const showClaimModal = ref(false)
+const claimModalContent = ref({
+  success: true,
+  title: '',
+  message: '',
+  cardCode: '',
+  days: 0,
+})
+
 const username = ref('')
 const password = ref('')
 const error = ref('')
@@ -19,6 +37,45 @@ const success = ref('')
 const loading = ref(false)
 const lockoutRemaining = ref(0)
 const rateLimitRemaining = ref(0)
+
+const passwordStrength = computed(() => {
+  const pwd = password.value
+  if (!pwd)
+    return { score: 0, level: '', color: '', valid: false }
+
+  let score = 0
+  if (pwd.length >= 6)
+    score++
+  if (pwd.length >= 10)
+    score++
+
+  let typeCount = 0
+  if (/[a-z]/.test(pwd))
+    typeCount++
+  if (/[A-Z]/.test(pwd))
+    typeCount++
+  if (/[0-9]/.test(pwd))
+    typeCount++
+  if (/[^a-zA-Z0-9]/.test(pwd))
+    typeCount++
+
+  if (typeCount >= 2)
+    score += 2
+  if (typeCount >= 3)
+    score++
+  if (typeCount >= 4)
+    score++
+
+  const commonPasswords = ['password', '123456', 'qwerty', 'abc123', '111111']
+  if (commonPasswords.some(p => pwd.toLowerCase().includes(p)))
+    score = Math.max(0, score - 2)
+
+  const level = score <= 2 ? '弱' : score <= 4 ? '中' : score <= 6 ? '强' : '非常强'
+  const color = score <= 2 ? 'var(--ui-danger)' : score <= 4 ? '#f0a020' : score <= 6 ? 'var(--ui-primary)' : '#2f9e44'
+  const valid = pwd.length >= 6 && typeCount >= 2
+
+  return { score, level, color, valid }
+})
 
 const usernameValid = computed(() => {
   const name = username.value
@@ -31,6 +88,11 @@ const usernameValid = computed(() => {
   if (!/^\w+$/.test(name))
     return { valid: false, message: '只能包含字母、数字、下划线' }
   return { valid: true, message: '' }
+})
+
+watch(password, () => {
+  if (!isLogin.value && password.value)
+    showPasswordStrength.value = true
 })
 
 function validateForm(): boolean {
@@ -46,6 +108,20 @@ function validateForm(): boolean {
     error.value = '请输入密码'
     return false
   }
+  if (!isLogin.value) {
+    if (password.value.length < 6) {
+      error.value = '密码长度至少6位'
+      return false
+    }
+    if (!passwordStrength.value.valid) {
+      error.value = '密码强度不足：需包含大写字母、小写字母、数字、特殊符号中的至少两种'
+      return false
+    }
+    if (!cardCode.value) {
+      error.value = '请输入卡密'
+      return false
+    }
+  }
   return true
 }
 
@@ -58,26 +134,41 @@ async function handleSubmit() {
   success.value = ''
 
   try {
-    const result = await userStore.login(username.value, password.value)
-    if (result.ok) {
-      if (result.data?.mustChangePassword)
-        success.value = '登录成功，请修改默认密码'
-      setTimeout(() => {
-        window.location.href = '/'
-      }, 500)
-    }
-    else if (result.errorType === 'rate_limit') {
-      error.value = result.error || '请求过于频繁，请稍后重试'
-      if (result.remainingMs)
-        rateLimitRemaining.value = Math.ceil(result.remainingMs / 1000)
-    }
-    else if (result.errorType === 'locked') {
-      error.value = result.error || '账户已被锁定'
-      if (result.remainingMs)
-        lockoutRemaining.value = Math.ceil(result.remainingMs / 1000 / 60)
+    if (isLogin.value) {
+      const result = await userStore.login(username.value, password.value)
+      if (result.ok) {
+        if (result.data?.mustChangePassword)
+          success.value = '登录成功，请修改默认密码'
+        setTimeout(() => {
+          window.location.href = '/'
+        }, 500)
+      }
+      else if (result.errorType === 'rate_limit') {
+        error.value = result.error || '请求过于频繁，请稍后重试'
+        if (result.remainingMs)
+          rateLimitRemaining.value = Math.ceil(result.remainingMs / 1000)
+      }
+      else if (result.errorType === 'locked') {
+        error.value = result.error || '账户已被锁定'
+        if (result.remainingMs)
+          lockoutRemaining.value = Math.ceil(result.remainingMs / 1000 / 60)
+      }
+      else {
+        error.value = result.error || '登录失败'
+      }
     }
     else {
-      error.value = result.error || '登录失败'
+      const result = await userStore.register(username.value, password.value, cardCode.value)
+      if (result.ok) {
+        success.value = '注册成功，请登录'
+        isLogin.value = true
+        cardCode.value = ''
+        password.value = ''
+        showPasswordStrength.value = false
+      }
+      else {
+        error.value = result.error || '注册失败'
+      }
     }
   }
   catch (e: any) {
@@ -101,6 +192,78 @@ async function handleSubmit() {
   }
 }
 
+function toggleMode() {
+  isLogin.value = !isLogin.value
+  error.value = ''
+  success.value = ''
+  showPasswordStrength.value = false
+  lockoutRemaining.value = 0
+  rateLimitRemaining.value = 0
+}
+
+async function checkCardClaimStatus() {
+  try {
+    const res = await api.get('/api/card-claim/status')
+    if (res.data.ok)
+      cardClaimEnabled.value = res.data.enabled === true
+  }
+  catch (e) {
+    console.error('检查卡密领取状态失败:', e)
+  }
+}
+
+async function claimFreeCard() {
+  if (cardClaimLoading.value)
+    return
+
+  cardClaimLoading.value = true
+  error.value = ''
+
+  try {
+    const res = await api.post('/api/card-claim/claim')
+
+    if (res.data.ok) {
+      cardCode.value = res.data.cardCode
+      claimModalContent.value = {
+        success: true,
+        title: '领取成功',
+        message: `成功领取 ${res.data.days} 天卡密！`,
+        cardCode: res.data.cardCode,
+        days: res.data.days,
+      }
+      showClaimModal.value = true
+    }
+    else {
+      claimModalContent.value = {
+        success: false,
+        title: '领取失败',
+        message: res.data.error || '领取失败，请稍后重试',
+        cardCode: '',
+        days: 0,
+      }
+      showClaimModal.value = true
+    }
+  }
+  catch (e: any) {
+    const data = e.response?.data
+    claimModalContent.value = {
+      success: false,
+      title: '领取失败',
+      message: data?.error || e.message || '领取失败',
+      cardCode: '',
+      days: 0,
+    }
+    showClaimModal.value = true
+  }
+  finally {
+    cardClaimLoading.value = false
+  }
+}
+
+function closeClaimModal() {
+  showClaimModal.value = false
+}
+
 async function fetchGameVersion() {
   try {
     const res = await api.get('/api/game-version')
@@ -114,7 +277,10 @@ async function fetchGameVersion() {
   }
 }
 
-onMounted(fetchGameVersion)
+onMounted(() => {
+  fetchGameVersion()
+  checkCardClaimStatus()
+})
 </script>
 
 <template>
@@ -128,7 +294,7 @@ onMounted(fetchGameVersion)
             QQ农场智能助手
           </h1>
           <p class="logo-subtitle">
-            超级管理员登录
+            {{ isLogin ? '登录您的农场账户' : '使用卡密注册新账户' }}
           </p>
         </div>
       </header>
@@ -143,7 +309,7 @@ onMounted(fetchGameVersion)
             id="username"
             v-model="username"
             type="text"
-            placeholder="请输入用户名"
+            :placeholder="isLogin ? '请输入用户名' : '请输入用户名（3-32位字母数字下划线）'"
             autocomplete="username"
             required
           />
@@ -161,8 +327,44 @@ onMounted(fetchGameVersion)
             id="password"
             v-model="password"
             type="password"
-            placeholder="请输入密码"
-            autocomplete="current-password"
+            :placeholder="isLogin ? '请输入密码' : '请设置密码（至少6位，含两种字符类型）'"
+            :autocomplete="isLogin ? 'current-password' : 'new-password'"
+            required
+          />
+          <div v-if="showPasswordStrength && password" class="password-strength">
+            <div class="strength-bar">
+              <div
+                class="strength-fill"
+                :style="{ width: `${Math.min(passwordStrength.score * 12.5, 100)}%`, backgroundColor: passwordStrength.color }"
+              />
+            </div>
+            <span class="strength-text" :style="{ color: passwordStrength.color }">
+              {{ passwordStrength.level }}
+            </span>
+          </div>
+        </div>
+
+        <div v-if="!isLogin" class="form-group">
+          <label class="form-label" for="cardCode">
+            <span class="i-carbon-ticket" />
+            卡密
+          </label>
+          <div v-if="cardClaimEnabled" class="claim-btn-wrap">
+            <button
+              type="button"
+              class="claim-card-btn"
+              :disabled="cardClaimLoading"
+              @click="claimFreeCard"
+            >
+              <span v-if="cardClaimLoading" class="i-svg-spinners-90-ring-with-bg" />
+              <span v-else>🎁 免费领取卡密</span>
+            </button>
+          </div>
+          <BaseInput
+            id="cardCode"
+            v-model="cardCode"
+            type="text"
+            placeholder="请输入卡密"
             required
           />
         </div>
@@ -182,11 +384,17 @@ onMounted(fetchGameVersion)
 
         <BaseButton type="submit" variant="primary" block :loading="loading" class="submit-btn">
           <span v-if="!loading" class="inline-flex items-center gap-2">
-            <span class="i-carbon-login" />
-            登录
+            <span :class="isLogin ? 'i-carbon-login' : 'i-carbon-user-follow'" />
+            {{ isLogin ? '登录' : '注册' }}
           </span>
         </BaseButton>
       </form>
+
+      <div class="switch-area">
+        <button type="button" class="switch-btn" @click="toggleMode">
+          {{ isLogin ? '没有账号？使用卡密注册' : '已有账号？返回登录' }}
+        </button>
+      </div>
 
       <footer class="card-footer">
         <div class="footer-info">
@@ -199,6 +407,44 @@ onMounted(fetchGameVersion)
         </a>
       </footer>
     </section>
+
+    <!-- 卡密领取结果弹窗 -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div
+          v-if="showClaimModal"
+          class="claim-modal-overlay"
+          @click.self="closeClaimModal"
+        >
+          <div class="claim-modal">
+            <div class="claim-modal-header">
+              <span class="claim-modal-icon">{{ claimModalContent.success ? '🎉' : '⚠️' }}</span>
+              <h3 class="claim-modal-title">
+                {{ claimModalContent.title }}
+              </h3>
+            </div>
+            <div class="claim-modal-body">
+              <p class="claim-modal-message">
+                {{ claimModalContent.message }}
+              </p>
+              <div v-if="claimModalContent.success && claimModalContent.cardCode" class="claim-modal-card-info">
+                <div class="card-code-label">
+                  卡密已自动填入
+                </div>
+                <div class="card-code-value">
+                  {{ claimModalContent.cardCode }}
+                </div>
+              </div>
+            </div>
+            <div class="claim-modal-footer">
+              <button class="claim-modal-btn" @click="closeClaimModal">
+                {{ claimModalContent.success ? '开始注册' : '我知道了' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </main>
 </template>
 
@@ -378,6 +624,216 @@ onMounted(fetchGameVersion)
 .github-link:hover {
   color: var(--ui-primary);
   background: var(--ui-primary-soft);
+}
+
+/* 密码强度 */
+.password-strength {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.strength-bar {
+  flex: 1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--ui-border);
+}
+
+.strength-fill {
+  height: 100%;
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.strength-text {
+  min-width: 44px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* 免费领卡 */
+.claim-btn-wrap {
+  margin-bottom: 2px;
+}
+
+.claim-card-btn {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 14px;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--ui-primary) 0%, color-mix(in srgb, var(--ui-primary) 75%, #000) 100%);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--ui-primary) 25%, transparent);
+}
+
+.claim-card-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--ui-primary) 35%, transparent);
+}
+
+.claim-card-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* 模式切换 */
+.switch-area {
+  margin-top: 18px;
+  text-align: center;
+}
+
+.switch-btn {
+  padding: 7px 14px;
+  border: none;
+  border-radius: 20px;
+  background: none;
+  color: var(--ui-primary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+
+.switch-btn:hover {
+  background: var(--ui-primary-soft);
+}
+
+/* 卡密领取弹窗 */
+.claim-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+}
+
+.claim-modal {
+  width: 100%;
+  max-width: 340px;
+  overflow: hidden;
+  border-radius: 18px;
+  background: var(--ui-bg);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  animation: modalSlideIn 0.3s ease;
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.claim-modal-header {
+  padding: 22px 20px 14px;
+  background: linear-gradient(135deg, var(--ui-primary-soft) 0%, color-mix(in srgb, var(--ui-primary) 15%, var(--ui-bg)) 100%);
+  text-align: center;
+}
+
+.claim-modal-icon {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 2.6rem;
+}
+
+.claim-modal-title {
+  margin: 0;
+  color: var(--ui-primary);
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.claim-modal-body {
+  padding: 18px;
+  text-align: center;
+}
+
+.claim-modal-message {
+  margin: 0 0 14px;
+  color: var(--ui-ink);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.claim-modal-card-info {
+  margin-top: 8px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--ui-primary-soft);
+}
+
+.card-code-label {
+  margin-bottom: 8px;
+  color: var(--ui-muted);
+  font-size: 11px;
+}
+
+.card-code-value {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--ui-bg);
+  color: var(--ui-primary);
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.claim-modal-footer {
+  padding: 0 18px 18px;
+}
+
+.claim-modal-btn {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--ui-primary) 0%, color-mix(in srgb, var(--ui-primary) 75%, #000) 100%);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+
+.claim-modal-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px color-mix(in srgb, var(--ui-primary) 40%, transparent);
+}
+
+/* 弹窗过渡动画 */
+.modal-enter-active,
+.modal-leave-active {
+  transition: all 0.3s ease;
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-from .claim-modal,
+.modal-leave-to .claim-modal {
+  transform: translateY(-20px) scale(0.95);
 }
 
 @media (max-width: 480px) {

@@ -538,6 +538,8 @@ const globalConfig: GlobalConfig = {
     loginSettings: { ...DEFAULT_LOGIN_SETTINGS },
     offlineReminder: { ...DEFAULT_OFFLINE_REMINDER },
     systemConfig: null,
+    announcement: { content: '', showOnce: true, updatedAt: 0, updatedBy: '' },
+    announcementReads: {},
 };
 
 function resolveAccountId(accountId: unknown): string {
@@ -588,6 +590,24 @@ function loadGlobalConfig(): void {
                         ? data.loginSettings.napCatSignature.trim()
                         : DEFAULT_LOGIN_SETTINGS.napCatSignature,
                 };
+            }
+
+            if (data.announcement && typeof data.announcement === 'object') {
+                const ann = data.announcement;
+                globalConfig.announcement = {
+                    content: typeof ann.content === 'string' ? ann.content : '',
+                    showOnce: ann.showOnce !== false,
+                    updatedAt: Number(ann.updatedAt) || 0,
+                    updatedBy: typeof ann.updatedBy === 'string' ? ann.updatedBy : '',
+                };
+            }
+            if (data.announcementReads && typeof data.announcementReads === 'object') {
+                const reads: Record<string, number> = {};
+                for (const [user, at] of Object.entries(data.announcementReads)) {
+                    const key = String(user || '').trim();
+                    if (key) reads[key] = Number(at) || 0;
+                }
+                globalConfig.announcementReads = reads;
             }
 
             if (data.systemConfig && typeof data.systemConfig === 'object') {

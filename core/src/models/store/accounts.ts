@@ -66,6 +66,8 @@ function normalizeAccount(raw: any): Account {
     };
     const nick = String(source.nick || '').trim();
     if (nick) account.nick = nick;
+    const owner = String(source.username || '').trim();
+    if (owner) account.username = owner;
     return account;
 }
 
@@ -75,7 +77,7 @@ function addOrUpdateAccount(acc: Partial<Account> & { avatarUrl?: string }): Acc
     let touchedAccountId = '';
     const source: any = acc || {};
     const cleanAccount: any = {};
-    for (const key of ['id', 'name', 'code', 'platform', 'uin', 'qq', 'avatar', 'avatarUrl', 'nick']) {
+    for (const key of ['id', 'name', 'code', 'platform', 'uin', 'qq', 'avatar', 'avatarUrl', 'nick', 'username']) {
         if (source[key] !== undefined) cleanAccount[key] = source[key];
     }
     acc = cleanAccount;
@@ -96,6 +98,7 @@ function addOrUpdateAccount(acc: Partial<Account> & { avatarUrl?: string }): Acc
             uin: acc.uin ? String(acc.uin) : '',
             qq: acc.qq ? String(acc.qq) : (acc.uin ? String(acc.uin) : ''),
             avatar: acc.avatar || acc.avatarUrl || '',
+            username: acc.username ? String(acc.username) : '',
             createdAt: Date.now(),
             updatedAt: Date.now(),
         });
@@ -119,6 +122,38 @@ function deleteAccount(id: unknown): AccountsData {
     return data;
 }
 
+/** 按归属用户过滤账号列表；username 为空时返回全部（管理员视图）。 */
+function getAccountsByUser(username: string): AccountsData {
+    const owner = String(username || '').trim();
+    const allAccounts = getAccounts();
+    if (!owner) return allAccounts;
+    return {
+        accounts: allAccounts.accounts.filter(a => String(a.username || '') === owner),
+        nextId: allAccounts.nextId,
+    };
+}
+
+/** 删除某用户名下全部账号（删除用户时级联清理）。 */
+function deleteAccountsByUser(username: string): { deletedCount: number; deletedIds: string[] } {
+    const { removeAccountConfig } = require('./account-config');
+    const owner = String(username || '').trim();
+    const data = getAccounts();
+    const deletedIds: string[] = [];
+    data.accounts = data.accounts.filter(a => {
+        if (String(a.username || '') === owner) {
+            deletedIds.push(a.id);
+            return false;
+        }
+        return true;
+    });
+    if (data.accounts.length === 0) {
+        data.nextId = 1;
+    }
+    saveAccounts(data);
+    deletedIds.forEach(id => removeAccountConfig(id));
+    return { deletedCount: deletedIds.length, deletedIds };
+}
+
 module.exports = {
     loadAccounts,
     saveAccounts,
@@ -126,4 +161,6 @@ module.exports = {
     normalizeAccountsData,
     addOrUpdateAccount,
     deleteAccount,
+    getAccountsByUser,
+    deleteAccountsByUser,
 };

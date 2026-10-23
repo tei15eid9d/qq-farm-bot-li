@@ -17,14 +17,23 @@ const {
     handleApiError,
     getAccountList,
     resolveAccId,
+    checkAccountAccess,
+    getAccessibleAccountIds,
+    adminRequired,
 } = require('./middleware');
+const userStore = require('../../models/user-store');
 
 function mountAccountRoutes(app: Application, ctx: AdminContext): void {
 
-    // API: 账号管理
+    // API: 账号管理（普通用户只能看到自己的账号）
     app.get('/api/accounts', (req: Request, res: Response) => {
         try {
+            const currentUser = (req as any).currentUser;
             const data = ctx.provider.getAccounts();
+            if (currentUser && currentUser.role !== 'admin') {
+                const owned = (data.accounts || []).filter((a: any) => String(a.username || '') === currentUser.username);
+                return res.json({ ok: true, data: { ...data, accounts: owned } });
+            }
             res.json({ ok: true, data });
         } catch (e: any) {
             handleApiError(res, e);
@@ -69,7 +78,9 @@ function mountAccountRoutes(app: Application, ctx: AdminContext): void {
             if (!requestedName) {
                 return res.status(400).json({ ok: false, error: '账号备注不能为空' });
             }
-            const visibleAccounts = getAccountList(ctx);
+            const currentUser = (req as any).currentUser;
+            const isAdmin = !currentUser || currentUser.role === 'admin';
+            const visibleAccounts = getAccountList(ctx, isAdmin ? null : currentUser.username);
             const remarkMatchedAccount = !body.id && requestedName
                 ? visibleAccounts.find((account: any) => String(account.name || '').trim() === requestedName)
                 : null;
@@ -79,6 +90,9 @@ function mountAccountRoutes(app: Application, ctx: AdminContext): void {
 
             const resolvedUpdateId = isUpdate ? resolveAccId(ctx, updateRef) : '';
             const payload = isUpdate ? { ...body, id: resolvedUpdateId || String(updateRef) } : body;
+            if (isUpdate && !checkAccountAccess(ctx, req as any, String(payload.id))) {
+                return res.status(403).json({ ok: false, error: '无权访问此账号' });
+            }
             let wasRunning = false;
             if (isUpdate && ctx.provider.isAccountRunning) {
                 wasRunning = ctx.provider.isAccountRunning(payload.id);
@@ -97,6 +111,21 @@ function mountAccountRoutes(app: Application, ctx: AdminContext): void {
                         onlyRemarkChanged = true;
                     }
                 }
+            }
+
+            // 新增账号：绑定归属用户并校验账号数量上限
+            if (!isUpdate && currentUser) {
+                const ownedCount = getAccountList(ctx, currentUser.username).length;
+                const limitCheck = userStore.canAddAccount(currentUser.username, ownedCount);
+                if (!limitCheck.canAdd) {
+                    return res.status(403).json({
+                        ok: false,
+                        error: limitCheck.limit > 0
+                            ? `账号数量已达上限（${limitCheck.current}/${limitCheck.limit}），请联系管理员或使用卡密扩容`
+                            : '账号数量已达上限',
+                    });
+                }
+                payload.username = currentUser.username;
             }
 
             const data = addOrUpdateAccount(payload);
@@ -133,6 +162,10 @@ function mountAccountRoutes(app: Application, ctx: AdminContext): void {
         try {
             const resolvedId = resolveAccId(ctx, req.params.id) || String(req.params.id || '');
 
+            if (!checkAccountAccess(ctx, req as any, resolvedId)) {
+                return res.status(403).json({ ok: false, error: '无权访问此账号' });
+            }
+
             const before = ctx.provider.getAccounts();
             const target = findAccountByRef(before.accounts || [], req.params.id);
             ctx.provider.stopAccount(resolvedId);
@@ -146,12 +179,22 @@ function mountAccountRoutes(app: Application, ctx: AdminContext): void {
         }
     });
 
-    // API: 账号日志
+    // API: 账号日志（普通用户只能看到自己账号的操作日志）
     app.get('/api/account-logs', (req: Request, res: Response) => {
         try {
             const limit = Number.parseInt(req.query.limit as string) || 100;
             let list: any[] = ctx.provider.getAccountLogs ? ctx.provider.getAccountLogs(limit) : [];
             if (!Array.isArray(list)) list = [];
+
+            const currentUser = (req as any).currentUser;
+            if (currentUser && currentUser.role !== 'admin') {
+                const accessibleIds = getAccessibleAccountIds(ctx, req as any);
+                list = list.filter((log: any) => {
+                    const logAccountId = log.accountId || log.id;
+                    if (!logAccountId) return false;
+                    return accessibleIds.includes(logAccountId);
+                });
+            }
 
             // 与当前 web 前端保持一致：直接返回数组
             res.json(list);
@@ -164,9 +207,14 @@ function mountAccountRoutes(app: Application, ctx: AdminContext): void {
     app.get('/api/logs', (req: Request, res: Response) => {
         const queryAccountIdRaw = (req.query.accountId || '').toString().trim();
         const id = queryAccountIdRaw ? (queryAccountIdRaw === 'all' ? '' : resolveAccId(ctx, queryAccountIdRaw)) : getAccId(ctx, req);
-        // 如果没有指定账号ID，获取所有账号的日志
+        // 指定了账号ID时，先校验归属
+        if (id && !checkAccountAccess(ctx, req as any, id)) {
+            return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        }
+
+        // 如果没有指定账号ID，获取所有（可访问）账号的日志
         if (!id) {
-            const accountIds = getAccountIds(ctx);
+            const accountIds = getAccessibleAccountIds(ctx, req as any);
             const allLogs: any[] = [];
             const options = {
                 limit: Number.parseInt(req.query.limit as string) || 100,
@@ -212,6 +260,10 @@ function mountAccountRoutes(app: Application, ctx: AdminContext): void {
     app.delete('/api/logs', (req: Request, res: Response) => {
         const id = getAccId(ctx, req);
         if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+
+        if (!checkAccountAccess(ctx, req as any, id)) {
+            return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        }
 
         try {
             const data = ctx.provider.clearLogs(id);
@@ -401,7 +453,7 @@ function mountAccountRoutes(app: Application, ctx: AdminContext): void {
         }
     });
 
-    app.get('/api/settings/device-presets', (_req: Request, res: Response) => {
+    app.get('/api/settings/device-presets', adminRequired, (_req: Request, res: Response) => {
         try {
             res.json({ ok: true, data: getDevicePresets() });
         } catch (e: any) {
@@ -409,7 +461,7 @@ function mountAccountRoutes(app: Application, ctx: AdminContext): void {
         }
     });
 
-    app.get('/api/settings/system-config', (_req: Request, res: Response) => {
+    app.get('/api/settings/system-config', adminRequired, (_req: Request, res: Response) => {
         try {
             res.json({
                 ok: true,
@@ -428,7 +480,7 @@ function mountAccountRoutes(app: Application, ctx: AdminContext): void {
         }
     });
 
-    app.get('/api/settings/login-config', (_req: Request, res: Response) => {
+    app.get('/api/settings/login-config', adminRequired, (_req: Request, res: Response) => {
         try {
             const loginSettings = store.getLoginSettings
                 ? store.getLoginSettings()
@@ -439,7 +491,7 @@ function mountAccountRoutes(app: Application, ctx: AdminContext): void {
         }
     });
 
-    app.post('/api/settings/login-config', (req: Request, res: Response) => {
+    app.post('/api/settings/login-config', adminRequired, (req: Request, res: Response) => {
         try {
             const body = (req.body && typeof req.body === 'object') ? req.body : {};
             const loginSettings = store.setLoginSettings
@@ -456,7 +508,7 @@ function mountAccountRoutes(app: Application, ctx: AdminContext): void {
         }
     });
 
-    app.post('/api/settings/system-config', (req: Request, res: Response) => {
+    app.post('/api/settings/system-config', adminRequired, (req: Request, res: Response) => {
         try {
             const { serverUrl, clientVersion, wxClientVersion, platform, os, timeZone, deviceInfo } = req.body || {};
             const saved = store.setSystemConfig({ serverUrl, clientVersion, wxClientVersion, platform, os, timeZone, deviceInfo });
@@ -471,7 +523,7 @@ function mountAccountRoutes(app: Application, ctx: AdminContext): void {
         }
     });
 
-    app.post('/api/settings/system-config/reset', (_req: Request, res: Response) => {
+    app.post('/api/settings/system-config/reset', adminRequired, (_req: Request, res: Response) => {
         try {
             const saved = getDefaultSystemConfig();
             store.setSystemConfig(saved);

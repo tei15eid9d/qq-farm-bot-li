@@ -11,6 +11,20 @@ const adminToken = useStorage('admin_token', '')
 let validatedToken = ''
 let validatingPromise: Promise<boolean> | null = null
 
+// 从本地缓存的用户信息判断角色（真实权限由服务端 admin 中间件把关）
+function isAdminUser(): boolean {
+  try {
+    const raw = localStorage.getItem('user_info')
+    if (!raw)
+      return false
+    const info = JSON.parse(raw)
+    return info?.role === 'admin'
+  }
+  catch {
+    return false
+  }
+}
+
 async function ensureTokenValid() {
   const token = String(adminToken.value || '').trim()
   if (!token)
@@ -47,7 +61,7 @@ const router = createRouter({
         path: route.path,
         name: route.name,
         component: route.component,
-        meta: route.meta,
+        meta: { ...route.meta, adminOnly: route.adminOnly },
       })),
     },
     {
@@ -89,6 +103,11 @@ router.beforeEach(async (to, _from) => {
     adminToken.value = ''
     validatedToken = ''
     return { name: 'login' }
+  }
+
+  // 后台管理仅限管理员访问
+  if (to.meta?.adminOnly && !isAdminUser()) {
+    return { name: 'dashboard' }
   }
 
   return true

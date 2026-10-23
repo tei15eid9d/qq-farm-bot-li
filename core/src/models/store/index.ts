@@ -52,11 +52,17 @@ module.exports = {
     setLoginSettings: globalConfig.setLoginSettings,
     getOfflineReminder: globalConfig.getOfflineReminder,
     setOfflineReminder: globalConfig.setOfflineReminder,
+    getAnnouncement: globalConfig.getAnnouncement,
+    setAnnouncement: globalConfig.setAnnouncement,
+    markAnnouncementRead: globalConfig.markAnnouncementRead,
+    shouldShowAnnouncement: globalConfig.shouldShowAnnouncement,
 
     // Accounts
     getAccounts: accounts.getAccounts,
     addOrUpdateAccount: accounts.addOrUpdateAccount,
     deleteAccount: accounts.deleteAccount,
+    getAccountsByUser: accounts.getAccountsByUser,
+    deleteAccountsByUser: accounts.deleteAccountsByUser,
 
     // System config
     getSystemConfig: globalConfig.getSystemConfig,

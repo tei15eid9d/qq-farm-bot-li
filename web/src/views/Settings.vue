@@ -44,6 +44,13 @@ const initialTab = settingsTabKeys.includes(queryTab as SettingsTab)
   : storedTab === 'user' ? 'system' : (storedTab as SettingsTab) || 'account'
 const activeTab = ref<SettingsTab>(initialTab)
 
+// 系统设置仅管理员可见（服务端同样有权限校验）
+const isAdmin = computed(() => userStore.isAdmin)
+watch(isAdmin, (admin) => {
+  if (!admin && activeTab.value === 'system')
+    activeTab.value = 'account'
+}, { immediate: true })
+
 watch(activeTab, (newTab) => {
   localStorage.setItem('settings-active-tab', newTab)
   if (String(route.query.tab || '') !== newTab) {
@@ -59,15 +66,15 @@ watch(() => route.query.tab, (value) => {
     activeTab.value = nextTab as SettingsTab
 })
 
-const tabs = [
+const tabs = computed(() => [
   { key: 'account', label: '账号管理', icon: 'i-carbon-user-profile' },
   { key: 'strategy', label: '策略设置', icon: 'i-carbon-settings-adjust' },
   { key: 'automation', label: '自动控制', icon: 'i-carbon-settings-adjust' },
-  { key: 'system', label: '系统设置', icon: 'i-carbon-settings' },
-] as const
+  ...(isAdmin.value ? [{ key: 'system', label: '系统设置', icon: 'i-carbon-settings' }] : []),
+] as Array<{ key: SettingsTab, label: string, icon: string }>)
 
 function setActiveTab(value: string) {
-  if (tabs.some(tab => tab.key === value))
+  if (tabs.value.some(tab => tab.key === value))
     activeTab.value = value as typeof activeTab.value
 }
 

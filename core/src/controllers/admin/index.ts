@@ -15,6 +15,7 @@ const { createModuleLogger } = require('../../services/logger');
 
 const { createAdminContext } = require('./context');
 const { mountAuthRoutes } = require('./auth-routes');
+const { mountAdminRoutes } = require('./admin-routes');
 const { mountAccountRoutes } = require('./account-routes');
 const { mountFarmRoutes } = require('./farm-routes');
 const { mountFriendRoutes } = require('./friend-routes');
@@ -28,6 +29,7 @@ const {
     emitRealtimeLog: _emitLog,
     emitRealtimeAccountLog: _emitAccountLog,
 } = require('./socket');
+const { createCleanupExpiredUsers } = require('./middleware');
 
 const adminLogger = createModuleLogger('admin');
 
@@ -74,6 +76,7 @@ function startAdminServer(dataProvider: any): void {
 
     // Mount route modules
     mountAuthRoutes(app, ctx);
+    mountAdminRoutes(app, ctx);
     mountWxLoginRoutes(app, ctx);
     mountQqLoginRoutes(app, ctx);
     mountFarmRoutes(app, ctx);
@@ -81,6 +84,11 @@ function startAdminServer(dataProvider: any): void {
     mountAccountRoutes(app, ctx);
     mountActivityCenterRoutes(app, ctx);
     mountCommerceRoutes(app, ctx);
+
+    // 每 5 分钟清理一次被封禁/过期用户的会话
+    const cleanupExpiredUsers = createCleanupExpiredUsers(ctx);
+    const cleanupTimer = setInterval(cleanupExpiredUsers, 5 * 60 * 1000);
+    if (typeof cleanupTimer.unref === 'function') cleanupTimer.unref();
 
     // SPA fallback
     app.get('*', (req: any, res: any) => {

@@ -10,6 +10,8 @@ export {};
 
 export interface AdminContext {
     tokens: Set<string>;
+    /** token -> 登录用户（{ username, role, card, accountLimit, ... }），多用户隔离的核心映射 */
+    tokenUserMap: Map<string, any>;
     app: Application | null;
     server: Server | null;
     io: SocketIOServer | null;
@@ -18,8 +20,10 @@ export interface AdminContext {
 
 function createAdminContext(dataProvider: any): AdminContext {
     const tokens = new Set<string>();
+    const tokenUserMap = new Map<string, any>();
     return {
         tokens,
+        tokenUserMap,
         app: null,
         server: null,
         io: null,

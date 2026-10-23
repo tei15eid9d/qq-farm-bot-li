@@ -141,7 +141,9 @@ test('saving or resetting connection settings never restarts live QQ or WeChat a
         const h = memoryStore(null);
         const { mountAccountRoutes } = load('controllers/admin/account-routes.js', { '../../models/store': h.store });
         let broadcasts = 0;
-        mountAccountRoutes({ get() {}, post: (route, handler) => routes.set(route, handler), delete() {}, put() {} }, { provider: {
+        // 路由可能带有鉴权中间件（如 adminRequired），这里只关心真实处理器，
+        // 因此捕获中间件链的最后一个函数（鉴权由专门的中间件测试覆盖）。
+        mountAccountRoutes({ get() {}, post: (route, ...handlers) => routes.set(route, handlers[handlers.length - 1]), delete() {}, put() {} }, { provider: {
             getAccounts: () => ({ accounts: [{ id: 'qq' }, { id: 'wx' }] }),
             isAccountRunning: () => true,
             restartAccount: () => assert.fail('Must not replay a used Code or disconnect another platform'),

@@ -329,7 +329,9 @@ function confirmRelogin() {
 }
 
 const navItems = computed(() => {
+  const isAdmin = userStore.isAdmin
   return menuRoutes
+    .filter(item => !item.adminOnly || isAdmin)
     .map(item => ({
       path: item.path ? `/${item.path}` : '/',
       label: item.label,
@@ -429,7 +431,7 @@ async function copyToken() {
               style="--focus-ring: var(--theme-primary)"
               aria-haspopup="menu"
               :aria-expanded="showUserDropdown"
-              :aria-label="isSidebarCollapsed ? `管理员：${userStore.username || '未登录'}` : undefined"
+              :aria-label="isSidebarCollapsed ? `${userStore.isAdmin ? '管理员' : '用户'}：${userStore.username || '未登录'}` : undefined"
               @click="toggleUserDropdown"
             >
               <div class="flex items-center gap-3 overflow-hidden">
@@ -457,7 +459,14 @@ async function copyToken() {
                     <span
                       class="admin-badge rounded-lg px-1.5 py-0.2 text-[10px] font-medium leading-tight"
                     >
-                      超级管理员
+                      {{ userStore.isAdmin ? '超级管理员' : '普通用户' }}
+                    </span>
+                    <span
+                      v-if="!userStore.isAdmin && userStore.userCard?.expiresAt"
+                      class="text-[10px] text-gray-400"
+                      :title="`到期时间：${userStore.expireTimeText}`"
+                    >
+                      {{ userStore.isExpired ? '已过期' : userStore.expireTimeText }}
                     </span>
                   </div>
                 </div>
@@ -471,7 +480,7 @@ async function copyToken() {
           </template>
           <div class="sidebar-tooltip-content">
             <strong>{{ userStore.username || '未登录' }}</strong>
-            <span>超级管理员 · 点击查看账户菜单</span>
+            <span>{{ userStore.isAdmin ? '超级管理员' : '普通用户' }} · 点击查看账户菜单</span>
           </div>
         </NTooltip>
 
@@ -485,14 +494,24 @@ async function copyToken() {
               {{ userStore.username }}
             </div>
             <div class="text-xs text-gray-500 dark:text-gray-400">
-              超级管理员
+              {{ userStore.isAdmin ? '超级管理员' : `普通用户${userStore.userCard?.expiresAt ? ` · ${userStore.isExpired ? '已过期' : userStore.expireTimeText}` : ''}` }}
             </div>
           </div>
           <div class="py-1">
             <NButton
+              v-if="userStore.isAdmin"
               class="sidebar-menu-button"
-
-              quaternary block
+              quaternary
+              block
+              @click="showUserDropdown = false; router.push('/admin')"
+            >
+              <div class="i-carbon-user-profile" />
+              <span>后台管理</span>
+            </NButton>
+            <NButton
+              class="sidebar-menu-button"
+              quaternary
+              block
               type="error"
               @click="handleLogout"
             >

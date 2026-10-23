@@ -124,6 +124,13 @@ export interface OfflineReminder {
   offlineDeleteSec: number;
 }
 
+export interface Announcement {
+  content: string;
+  showOnce: boolean;
+  updatedAt: number;
+  updatedBy: string;
+}
+
 export interface UIConfig {
   theme: 'light' | 'dark';
 }
@@ -164,4 +171,6 @@ export interface GlobalConfig {
   loginSettings: LoginSettings;
   offlineReminder: OfflineReminder;
   systemConfig: SystemConfig | null;
+  announcement: Announcement;
+  announcementReads: Record<string, number>;
 }

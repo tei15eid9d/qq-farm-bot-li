@@ -3,9 +3,19 @@ import { defineStore } from 'pinia'
 import { computed } from 'vue'
 import api, { getApiErrorMessage } from '@/api'
 
-export interface AdminInfo {
+export interface UserCard {
+  code: string
+  description: string
+  days: number
+  expiresAt: number | null
+  enabled: boolean
+}
+
+export interface User {
   username: string
-  role: 'admin'
+  role: 'admin' | 'user'
+  card: UserCard | null
+  accountLimit: number
   avatar?: string
   mustChangePassword?: boolean
 }
@@ -17,18 +27,73 @@ export interface LoginResult {
   remainingMs?: number
   data?: {
     token: string
-    role: 'admin'
+    role: string
+    card: UserCard | null
+    accountLimit: number
     user: { username: string }
     mustChangePassword?: boolean
   }
 }
 
+export interface Card {
+  code: string
+  description: string
+  days: number
+  type: 'time' | 'quota'
+  enabled: boolean
+  usedBy: string | null
+  usedAt: number | null
+  createdAt: number
+}
+
 export const useUserStore = defineStore('user', () => {
   const token = useStorage('admin_token', '')
-  const userInfo = useStorage<AdminInfo | null>('user_info', null)
+  // 显式 JSON 序列化：默认值为 null 时 VueUse 会推断为 any 序列化器，
+  // 写入对象会变成 "[object Object]"，导致角色等信息无法读回。
+  const userInfo = useStorage<User | null>('user_info', null, localStorage, {
+    serializer: {
+      read: (raw: string): User | null => {
+        try {
+          return raw ? JSON.parse(raw) : null
+        }
+        catch {
+          return null
+        }
+      },
+      write: (value: User | null): string => JSON.stringify(value),
+    },
+  })
   const isLoggedIn = computed(() => !!token.value)
+  const isAdmin = computed(() => userInfo.value?.role === 'admin')
   const username = computed(() => userInfo.value?.username || '')
+  const userCard = computed(() => userInfo.value?.card)
+  const accountLimit = computed(() => userInfo.value?.accountLimit ?? 2)
   const avatar = computed(() => userInfo.value?.avatar || '')
+
+  // 检查用户是否过期（管理员永久有效）
+  const isExpired = computed(() => {
+    if (!userInfo.value || userInfo.value.role === 'admin')
+      return false
+    if (!userInfo.value.card?.expiresAt)
+      return false
+    return Date.now() > userInfo.value.card.expiresAt
+  })
+
+  // 获取过期时间显示
+  const expireTimeText = computed(() => {
+    if (!userInfo.value)
+      return ''
+    if (userInfo.value.role === 'admin')
+      return '永久有效'
+    if (!userInfo.value.card)
+      return '无卡密'
+    if (userInfo.value.card.days === -1)
+      return '永久有效'
+    if (!userInfo.value.card.expiresAt)
+      return '未激活'
+    const date = new Date(userInfo.value.card.expiresAt)
+    return date.toLocaleString('zh-CN')
+  })
 
   async function login(username: string, password: string): Promise<LoginResult> {
     try {
@@ -37,7 +102,9 @@ export const useUserStore = defineStore('user', () => {
         token.value = res.data.data.token
         userInfo.value = {
           username: res.data.data.user.username,
-          role: 'admin',
+          role: res.data.data.role,
+          card: res.data.data.card,
+          accountLimit: res.data.data.accountLimit ?? 2,
           mustChangePassword: res.data.data.mustChangePassword,
         }
       }
@@ -45,9 +112,26 @@ export const useUserStore = defineStore('user', () => {
     }
     catch (error: any) {
       const data = error.response?.data
-      return data
-        ? { ok: false, error: getApiErrorMessage(data, '网络错误'), errorType: data.errorType, remainingMs: data.remainingMs }
-        : { ok: false, error: getApiErrorMessage(error, '网络错误') }
+      if (data) {
+        return {
+          ok: false,
+          error: getApiErrorMessage(data, '登录失败'),
+          errorType: data.errorType,
+          remainingMs: data.remainingMs,
+        }
+      }
+      return { ok: false, error: getApiErrorMessage(error, '网络错误') }
+    }
+  }
+
+  async function register(username: string, password: string, cardCode: string) {
+    try {
+      const res = await api.post('/api/register', { username, password, cardCode })
+      return res.data
+    }
+    catch (error: any) {
+      const data = error.response?.data
+      return data ? { ok: false, error: getApiErrorMessage(data, '注册失败') } : { ok: false, error: getApiErrorMessage(error, '网络错误') }
     }
   }
 
@@ -64,8 +148,9 @@ export const useUserStore = defineStore('user', () => {
   async function fetchUserInfo() {
     try {
       const res = await api.get('/api/user/me')
-      if (res.data.ok)
+      if (res.data.ok) {
         userInfo.value = res.data.data
+      }
       return res.data
     }
     catch {
@@ -73,8 +158,107 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
+  async function renew(cardCode: string) {
+    try {
+      const res = await api.post('/api/user/renew', { cardCode })
+      if (res.data.ok && userInfo.value) {
+        // 更新本地用户信息
+        userInfo.value.card = res.data.data.card
+        userInfo.value.accountLimit = res.data.data.accountLimit
+      }
+      return res.data
+    }
+    catch (error: any) {
+      const data = error.response?.data
+      return data ? { ok: false, error: getApiErrorMessage(data, '续期失败') } : { ok: false, error: getApiErrorMessage(error, '网络错误') }
+    }
+  }
+
   async function changePassword(oldPassword: string, newPassword: string) {
-    const res = await api.post('/api/user/change-password', { oldPassword, newPassword })
+    try {
+      const res = await api.post('/api/user/change-password', { oldPassword, newPassword })
+      return res.data
+    }
+    catch (error: any) {
+      const data = error.response?.data
+      return data ? { ok: false, error: getApiErrorMessage(data, '操作失败') } : { ok: false, error: getApiErrorMessage(error, '网络错误') }
+    }
+  }
+
+  // ==================== 管理员功能 ====================
+  async function getAllUsers() {
+    const res = await api.get('/api/admin/users')
+    return res.data
+  }
+
+  async function getLoginLogs(limit = 100, offset = 0) {
+    const res = await api.get('/api/admin/login-logs', { params: { limit, offset } })
+    return res.data
+  }
+
+  async function clearLoginLogs() {
+    const res = await api.delete('/api/admin/login-logs')
+    return res.data
+  }
+
+  async function updateUser(username: string, updates: Record<string, any>) {
+    const res = await api.post(`/api/admin/users/${username}`, updates)
+    return res.data
+  }
+
+  async function editUser(username: string, updates: Record<string, any>) {
+    const res = await api.post(`/api/admin/users/${username}/edit`, updates)
+    return res.data
+  }
+
+  async function deleteUser(username: string) {
+    const res = await api.delete(`/api/admin/users/${username}`)
+    return res.data
+  }
+
+  async function renewUser(username: string, cardCode: string) {
+    const res = await api.post(`/api/admin/users/${username}/renew`, { cardCode })
+    return res.data
+  }
+
+  async function getAllCards() {
+    const res = await api.get('/api/admin/cards')
+    return res.data
+  }
+
+  async function createCard(description: string, days: number, count?: number, type?: 'time' | 'quota') {
+    const res = await api.post('/api/admin/cards', { description, days, count, type })
+    return res.data
+  }
+
+  async function updateCard(code: string, updates: Partial<Card>) {
+    const res = await api.post(`/api/admin/cards/${code}`, updates)
+    return res.data
+  }
+
+  async function deleteCard(code: string) {
+    const res = await api.delete(`/api/admin/cards/${code}`)
+    return res.data
+  }
+
+  async function deleteCardsBatch(codes: string[]) {
+    const res = await api.post('/api/admin/cards/batch-delete', { codes })
+    return res.data
+  }
+
+  // ==================== 公告 ====================
+  async function getAnnouncement() {
+    const res = await api.get('/api/announcement')
+    return res.data
+  }
+
+  async function markAnnouncementRead() {
+    const res = await api.post('/api/announcement/read')
+    return res.data
+  }
+
+  async function setAnnouncement(content: string, showOnce: boolean) {
+    const res = await api.post('/api/admin/announcement', { content, showOnce })
     return res.data
   }
 
@@ -82,11 +266,33 @@ export const useUserStore = defineStore('user', () => {
     token,
     userInfo,
     isLoggedIn,
+    isAdmin,
     username,
+    userCard,
+    accountLimit,
     avatar,
+    isExpired,
+    expireTimeText,
     login,
+    register,
     logout,
     fetchUserInfo,
+    renew,
     changePassword,
+    getAllUsers,
+    getLoginLogs,
+    clearLoginLogs,
+    updateUser,
+    editUser,
+    deleteUser,
+    renewUser,
+    getAllCards,
+    createCard,
+    updateCard,
+    deleteCard,
+    deleteCardsBatch,
+    getAnnouncement,
+    markAnnouncementRead,
+    setAnnouncement,
   }
 })
